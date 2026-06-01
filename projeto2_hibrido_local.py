@@ -28,13 +28,13 @@ import time
 # =========================================================
 # 0. Diretório de saída local
 # =========================================================
-local_path = os.path.expanduser("~/cpe723_hibrido")
-os.makedirs(local_path, exist_ok=True)
-csv_path_hib         = os.path.join(local_path, "grid_search_hibrido_results.csv")
-best_record_path_hib = os.path.join(local_path, "best_record_hibrido.npz")
+# local_path é definido dinamicamente no __main__ com base em NC_number
+local_path = None  # será atualizado em __main__
+# csv_path_hib e best_record_path_hib são definidos em __main__
+csv_path_hib = None
+best_record_path_hib = None
 print("Resultados Híbrido serão salvos em:")
-print(csv_path_hib)
-print(best_record_path_hib)
+# csv_path_hib e best_record_path_hib serão impressos em __main__
 
 # =========================================================
 # 1. Geração de dados sintéticos em R^3
@@ -516,7 +516,14 @@ def plot_best_solution_hibrido(data_vectors, cluster_centers, best_record):
 # =========================================================
 if __name__ == "__main__":
 
-    NC_number = 8
+    NC_number = 4   # ← mude aqui para 4, 8, 16, etc.
+
+    # Diretório de saída automático baseado no NC_number
+    local_path = os.path.expanduser(f"~/cpe723_hibrido_nc{NC_number}")
+    os.makedirs(local_path, exist_ok=True)
+    csv_path_hib         = os.path.join(local_path, "grid_search_hibrido_results.csv")
+    best_record_path_hib = os.path.join(local_path, "best_record_hibrido.npz")
+    print(f"Resultados salvos em: {local_path}")
     data_vectors, cluster_centers = generate_data_r3(P=100, NC=NC_number, sigma=0.1, seed=1)
     J_ref = J_hard(cluster_centers, data_vectors)
     print(f"Custo com centros verdadeiros: {J_ref:.6f}")
@@ -551,6 +558,8 @@ if __name__ == "__main__":
         tol=1e-2,
         Nexec=Nexec,
         N_rep=N_rep_timing,
+        csv_path=csv_path_hib,
+        best_record_path=best_record_path_hib,
     )
 
     print("\n===== Top 10 combinações (por SR) =====")

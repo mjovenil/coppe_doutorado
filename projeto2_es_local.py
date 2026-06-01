@@ -15,10 +15,11 @@ import time
 # =========================================================
 # 0. Diretório de saída local
 # =========================================================
-local_path = os.path.expanduser("~/cpe723_es")
-os.makedirs(local_path, exist_ok=True)
-csv_path_es         = os.path.join(local_path, "grid_search_es_results.csv")
-best_record_path_es = os.path.join(local_path, "best_record_es.npz")
+# local_path é definido dinamicamente no __main__ com base em NC_number
+local_path = None  # será atualizado em __main__
+# csv_path_es e best_record_path_es são definidos em __main__
+csv_path_es = None
+best_record_path_es = None
 print("Resultados ES serão salvos em:")
 print(csv_path_es)
 print(best_record_path_es)
@@ -203,7 +204,7 @@ def run_es(
             break
 
     elapsed = time.perf_counter() - start_time
-    print(f"    Tempo de execução: {elapsed:.2f} s | J_best={D_best:.6f} | isuc={isuc}")
+    print(f"    Tempo de execução: {elapsed:.2f} s | D_best={D_best:.6f} | isuc={isuc}")
 
     return D_best, Y_best, history_D, history_Dbest, history_time, isuc, ncalls_suc
 
@@ -543,7 +544,7 @@ def plot_best_solution_es(data_vectors, cluster_centers, best_record):
     # ── Gráfico 2: eixo x = tempo (s) — mesmo estilo da Ana Cláudia ──
     plt.figure(figsize=(10, 6))
     plt.plot(history_time, history_D,     'r-', label='Custo médio da geração')
-    plt.plot(history_time, history_Dbest, 'k-', label='Melhor custo acumulado (J_best)')
+    plt.plot(history_time, history_Dbest, 'k-', label='Melhor custo acumulado (D_best)')
     plt.axhline(y=J_ref, color='b', linestyle='--', linewidth=1.0,
                 label='Custo com centros verdadeiros')
     plt.grid(); plt.xlabel('Tempo (s)'); plt.ylabel('Custo')
@@ -628,7 +629,14 @@ def medir_tempo_es(data_vectors, NC, best_record, N_rep=10):
 # =========================================================
 if __name__ == "__main__":
 
-    NC_number = 8
+    NC_number = 4   # ← mude aqui para 4, 8, 16, etc.
+
+    # Diretório de saída automático baseado no NC_number
+    local_path = os.path.expanduser(f"~/cpe723_es_nc{NC_number}")
+    os.makedirs(local_path, exist_ok=True)
+    csv_path_es = os.path.join(local_path, "grid_search_es_results.csv")
+    best_record_path_es = os.path.join(local_path, "best_record_es.npz")
+    print(f"Resultados salvos em: {local_path}")
     data_vectors, cluster_centers = generate_data_r3(P=100, NC=NC_number, sigma=0.1, seed=1)
     J_ref = J_hard(cluster_centers, data_vectors)
     print(f"Custo com centros verdadeiros: {J_ref:.6f}")
@@ -644,10 +652,10 @@ if __name__ == "__main__":
         data_vectors=data_vectors,
         cluster_centers=cluster_centers,
         NC=NC_number,
-        Nind_values        = [100],
-        Npais_values       = [50, 100],
-        Nfilhos_values     = [700],
-        Nsob_values        = [50, 100],
+        Nind_values        = [50],
+        Npais_values       = [40],
+        Nfilhos_values     = [300],
+        Nsob_values        = [50],
         Nger_values        = [800],
         epson0_values      = [1e-8],
         tau1_values        = [None],
@@ -661,6 +669,8 @@ if __name__ == "__main__":
         tol=1e-2,
         Nexec=Nexec,
         N_rep=N_rep_timing,
+        csv_path=csv_path_es,
+        best_record_path=best_record_path_es,
     )
 
     # ---------------------------------------------------------

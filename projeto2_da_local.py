@@ -16,10 +16,11 @@ from mpl_toolkits.mplot3d import Axes3D
 # =========================================================
 # 0. Diretório de saída local
 # =========================================================
-local_path = os.path.expanduser("~/cpe723_da")
-os.makedirs(local_path, exist_ok=True)
-csv_path_da         = os.path.join(local_path, "grid_search_da_results.csv")
-best_record_path_da = os.path.join(local_path, "best_record_da.npz")
+# local_path é definido dinamicamente no __main__ com base em NC_number
+local_path = None  # será atualizado em __main__
+# csv_path_da e best_record_path_da são definidos em __main__
+csv_path_da = None
+best_record_path_da = None
 print("Resultados DA serão salvos em:")
 print(csv_path_da)
 print(best_record_path_da)
@@ -347,6 +348,8 @@ def grid_search_da(
             "history_D_file":     history_D_path,
             "history_Dbest_file": history_Dbest_path,
             "history_time_file":  history_time_path,
+            "history_J_file":     history_J_path,
+            "history_T_file":     history_T_path,
         }
 
         df_row = pd.DataFrame([row])
@@ -496,7 +499,14 @@ def medir_tempo_da(data_vectors, NC, best_record, N_rep=10):
 # =========================================================
 if __name__ == "__main__":
 
-    NC_number = 8
+    NC_number = 8   # ← mude aqui para 4, 8, 16, etc.
+
+    # Diretório de saída automático baseado no NC_number
+    local_path = os.path.expanduser(f"~/cpe723_da_nc{NC_number}")
+    os.makedirs(local_path, exist_ok=True)
+    csv_path_da = os.path.join(local_path, "grid_search_da_results.csv")
+    best_record_path_da = os.path.join(local_path, "best_record_da.npz")
+    print(f"Resultados salvos em: {local_path}")
     data_vectors, cluster_centers = generate_data_r3(P=100, NC=NC_number, sigma=0.1, seed=1)
     D_ref = J_hard(cluster_centers, data_vectors)
     print(f"Custo com centros verdadeiros: {D_ref:.6f}")
@@ -517,6 +527,8 @@ if __name__ == "__main__":
         tol=1e-2,
         Nexec=Nexec,
         N_rep=N_rep_timing,
+        csv_path=csv_path_da,
+        best_record_path=best_record_path_da,
     )
 
     print("\n===== Top 10 combinações (por SR) =====")
