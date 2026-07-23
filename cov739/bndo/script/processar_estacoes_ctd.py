@@ -39,6 +39,7 @@ Uso:
 """
 
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seawater as sw
 from pathlib import Path
@@ -630,6 +631,232 @@ def plotar_com_origem(ax, x: pd.Series, y: pd.Series, origem: "pd.Series | None"
 
 # Parâmetros na ordem pedida em aula: pressão, temperatura, salinidade,
 # densidade potencial, densidade in situ, condutividade, velocidade do som.
+# ---------------------------------------------------------------------------
+# COMPARAÇÃO COM A FÓRMULA TEÓRICA (gás ideal x fórmula geral de fluidos)
+# ---------------------------------------------------------------------------
+
+
+def calcular_c_diferencas_finitas(estacao: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calcula a velocidade do som usando DIRETAMENTE a fórmula geral e exata
+    para fluidos (vista em aula):
+
+        c = sqrt( (∂P/∂ρ)_S )
+
+    Aqui (∂P/∂ρ) é estimado por DIFERENÇAS FINITAS a partir dos próprios
+    dados medidos de Pressão e Densidade in situ do perfil — ou seja, não
+    usa nenhuma fórmula empírica (Mackenzie/UNESCO), só a definição física
+    pura aplicada aos dados reais. Isso permite comparar a fórmula teórica
+    diretamente com o valor empírico (Mackenzie) já calculado.
+
+    Pressão é convertida de dbar para Pa (1 dbar = 10.000 Pa) antes da
+    derivada, para que o resultado saia em unidades corretas (m/s).
+
+    Pontos onde a densidade praticamente não varia entre medições
+    vizinhas (camada bem misturada) são descartados, pois a divisão por
+    Δρ≈0 explode numericamente e não tem significado físico ali.
+    """
+    estacao = estacao.copy()
+    P_pa = estacao["Pressão [db]"].to_numpy() * 1.0e4
+    rho = estacao["Densidade ro [kg/m³]"].to_numpy()
+
+    dP = np.gradient(P_pa)
+    drho = np.gradient(rho)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        c2 = dP / drho
+
+    # Descarta pontos com Δρ desprezível (camada bem misturada) ou
+    # resultado sem sentido físico (c² negativo, o que indicaria
+    # densidade diminuindo com a pressão — instabilidade não realista
+    # aqui, e sim ruído numérico)
+    invalido = (np.abs(drho) < 1e-3) | (c2 <= 0) | ~np.isfinite(c2)
+    c = np.sqrt(np.where(invalido, np.nan, c2))
+
+    estacao["Velocidade do som (dP/dρ) [m/s]"] = c
+    return estacao
+
+
+def calcular_c_gas_ideal(estacao: pd.DataFrame, gamma_agua: float = 1.01) -> pd.DataFrame:
+    """
+    Calcula a velocidade do som usando a fórmula de GÁS IDEAL:
+
+        c = sqrt( γ P / ρ )
+
+    aplicada (propositalmente, para efeito de comparação didática) aos
+    dados de água do mar — mesmo essa fórmula sendo estritamente válida
+    apenas para gases ideais, não para líquidos.
+
+    γ (gamma) da água líquida é aproximadamente 1,01 (Cp/Cv muito
+    próximo de 1, já que líquidos têm capacidade calorífica quase igual
+    a pressão e volume constantes — bem diferente do ar, onde γ≈1,4).
+
+    O objetivo é justamente mostrar que essa fórmula SUBESTIMA
+    grosseiramente a velocidade do som na água — porque, num líquido,
+    a pressão ambiente não está diretamente ligada à compressibilidade
+    do meio (ao contrário de um gás, onde P e ρ são acopladas pela
+    equação de estado PV=nRT). O que realmente importa para a
+    compressibilidade de um líquido é o módulo de compressibilidade
+    (bulk modulus), não a pressão hidrostática em si.
+    """
+    estacao = estacao.copy()
+    P_pa = estacao["Pressão [db]"].to_numpy() * 1.0e4
+    rho = estacao["Densidade ro [kg/m³]"].to_numpy()
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        c = np.sqrt(gamma_agua * P_pa / rho)
+
+    estacao["Velocidade do som (gás ideal) [m/s]"] = c
+    return estacao
+
+
+def gerar_figura_comparacao_formula(estacoes_zee: dict, caminho_saida: Path) -> None:
+    """
+    Gera uma figura com um painel por região, comparando 3 formas de
+    obter a velocidade do som ao longo da profundidade (usando a
+    estação de ZEE de cada região, por ser a mais profunda e ter maior
+    variação de pressão/densidade, o que deixa a comparação mais clara):
+
+      1) Mackenzie/BNDO — valor empírico já usado no resto do trabalho
+      2) sqrt(dP/dρ) — fórmula geral e exata, calculada por diferenças
+         finitas diretamente dos dados medidos (sem fórmula empírica)
+      3) sqrt(γP/ρ) — fórmula de gás ideal, aplicada "errada" de
+         propósito à água, para evidenciar por que ela não serve para
+         líquidos.
+    """
+    regioes_com_zee = {r: df for r, df in estacoes_zee.items() if df is not None}
+    if not regioes_com_zee:
+        print("  [AVISO] Nenhuma estação de ZEE disponível para a comparação de fórmulas.")
+        return
+
+    n = len(regioes_com_zee)
+    fig, eixos = plt.subplots(1, n, figsize=(6 * n, 8), sharey=True)
+    if n == 1:
+        eixos = [eixos]
+
+    for ax, (regiao, estacao) in zip(eixos, regioes_com_zee.items()):
+        estacao = calcular_c_diferencas_finitas(estacao)
+        estacao = calcular_c_gas_ideal(estacao)
+
+        ax.plot(estacao["Velocidade do som [m/s]"], estacao["Profundidade [m]"],
+                color="tab:blue", label="Mackenzie / BNDO (empírica)")
+        ax.plot(estacao["Velocidade do som (dP/dρ) [m/s]"], estacao["Profundidade [m]"],
+                color="tab:green", linestyle="--", label=r"$\sqrt{dP/d\rho}$ (geral, dados reais)")
+        ax.plot(estacao["Velocidade do som (gás ideal) [m/s]"], estacao["Profundidade [m]"],
+                color="tab:red", linestyle=":", label=r"$\sqrt{\gamma P/\rho}$ (gás ideal — errado p/ líquido)")
+
+        ax.set_xlabel("Velocidade do som [m/s]")
+        ax.set_title(f"{regiao} (ZEE)")
+        ax.grid(alpha=0.3)
+
+    eixos[0].set_ylabel("Profundidade [m]")
+    eixos[0].invert_yaxis()
+    eixos[0].legend(fontsize=8, loc="lower right")
+
+    fig.suptitle("Velocidade do Som: Fórmula Empírica x Fórmula Geral (dP/dρ) x Gás Ideal", fontsize=13)
+    fig.tight_layout()
+    fig.savefig(caminho_saida, dpi=150)
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# GRÁFICOS DE DISPERSÃO PROPRIEDADE x PROPRIEDADE
+# (c×T, S×T, σ×T, c×S, σ×S — função [k=0] e derivada [k=1])
+# ---------------------------------------------------------------------------
+
+# Todos os pares (y, x) entre {T, S, σ (condutividade), c (velocidade)},
+# exceto S×S (sem sentido) e σ×c (fora do que foi pedido em aula).
+PARAMETROS_DISPERSAO = [
+    ("Temperatura [°c]", "Velocidade do som [m/s]", "Temperatura [°C]", "Velocidade do som [m/s]", "c × T"),
+    ("Temperatura [°c]", "Salinidade [psu]", "Temperatura [°C]", "Salinidade [psu]", "S × T"),
+    ("Temperatura [°c]", "Condutividade [S/m]", "Temperatura [°C]", "Condutividade [S/m]", "σ × T"),
+    ("Salinidade [psu]", "Velocidade do som [m/s]", "Salinidade [psu]", "Velocidade do som [m/s]", "c × S"),
+    ("Salinidade [psu]", "Condutividade [S/m]", "Salinidade [psu]", "Condutividade [S/m]", "σ × S"),
+]
+
+
+def gerar_figura_dispersao(curvas: dict, caminho_saida: Path, titulo: str) -> None:
+    """
+    Gera uma figura com 5 painéis de dispersão propriedade x propriedade
+    (não profundidade x propriedade, como nas figuras de perfil):
+    c×T, S×T, σ×T, c×S, σ×S.
+
+    Cada curva liga os pontos na ordem de profundidade crescente (não é
+    um scatter solto), o que revela a trajetória da massa d'água ao
+    longo da coluna — o clássico diagrama usado para identificar massas
+    d'água em oceanografia.
+
+    curvas: dict {nome_da_curva: {"dados": DataFrame, "cor": cor}}
+    """
+    fig, eixos = plt.subplots(2, 3, figsize=(18, 11))
+    eixos = eixos.flatten()
+
+    for ax, (col_x, col_y, rotulo_x, rotulo_y, titulo_painel) in zip(eixos, PARAMETROS_DISPERSAO):
+        for nome_curva, info in curvas.items():
+            df = info["dados"]
+            cor = info["cor"]
+            if col_x in df.columns and col_y in df.columns:
+                ax.plot(df[col_x], df[col_y], color=cor, label=nome_curva,
+                        marker=".", markersize=2, linewidth=1)
+        ax.set_xlabel(rotulo_x)
+        ax.set_ylabel(rotulo_y)
+        ax.set_title(titulo_painel)
+        ax.grid(alpha=0.3)
+
+    eixos[0].legend(fontsize=8)
+    eixos[-1].axis("off")  # 6º espaço sobra vazio (5 painéis de 6 disponíveis)
+
+    fig.suptitle(titulo, fontsize=14)
+    fig.tight_layout()
+    fig.savefig(caminho_saida, dpi=150)
+    plt.close(fig)
+
+
+def gerar_figura_dispersao_derivada(curvas: dict, caminho_saida: Path, titulo: str) -> None:
+    """
+    Versão 'k=1' dos mesmos 5 painéis: em vez do valor da propriedade em
+    si, plota a DERIVADA dY/dX (taxa de variação local), calculada por
+    diferenças finitas (numpy.gradient) ao longo do perfil.
+
+    Um valor grande de |dY/dX| aponta uma região onde a propriedade X
+    influencia fortemente a propriedade Y — por exemplo, um pico em
+    |dc/dT| marca onde a temperatura mais afeta a velocidade do som
+    naquele perfil (tipicamente perto da termoclina).
+    """
+    fig, eixos = plt.subplots(2, 3, figsize=(18, 11))
+    eixos = eixos.flatten()
+
+    for ax, (col_x, col_y, rotulo_x, rotulo_y, titulo_painel) in zip(eixos, PARAMETROS_DISPERSAO):
+        for nome_curva, info in curvas.items():
+            df = info["dados"]
+            cor = info["cor"]
+            if col_x in df.columns and col_y in df.columns:
+                x = df[col_x].to_numpy()
+                y = df[col_y].to_numpy()
+                valido = np.isfinite(x) & np.isfinite(y)
+                if valido.sum() < 3:
+                    continue
+                dx = np.gradient(x[valido])
+                dy = np.gradient(y[valido])
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    derivada = np.where(np.abs(dx) > 1e-6, dy / dx, np.nan)
+                ax.plot(x[valido], derivada, color=cor, label=nome_curva,
+                        marker=".", markersize=2, linewidth=1)
+        ax.axhline(y=0, color="gray", linewidth=0.6, alpha=0.6)
+        ax.set_xlabel(rotulo_x)
+        ax.set_ylabel(f"d({rotulo_y.split(' ')[0]})/d({rotulo_x.split(' ')[0]})")
+        ax.set_title(f"d({titulo_painel.split(' × ')[0]})/d({titulo_painel.split(' × ')[1]})")
+        ax.grid(alpha=0.3)
+
+    eixos[0].legend(fontsize=8)
+    eixos[-1].axis("off")
+
+    fig.suptitle(titulo, fontsize=14)
+    fig.tight_layout()
+    fig.savefig(caminho_saida, dpi=150)
+    plt.close(fig)
+
+
 PARAMETROS_PERFIL = [
     ("Pressão [db]", "Pressão [db]", "Perfil de Pressão", "origem_pressao"),
     ("Temperatura [°c]", "Temperatura [°C]", "Perfil de Temperatura", None),
@@ -721,6 +948,7 @@ def gerar_figura_perfis(curvas: dict, caminho_saida: Path, titulo: str,
     else:
         fig.tight_layout()
     fig.savefig(caminho_saida, dpi=150)
+    plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -827,6 +1055,59 @@ def main():
             mostrar_origem=True,
         )
         print(f"  {zona}: {caminho1.name}, {caminho2.name}")
+
+    # -----------------------------------------------------------------
+    # Comparação com a fórmula teórica (gás ideal x fórmula geral)
+    # -----------------------------------------------------------------
+    print("\nGerando comparação com a fórmula teórica...")
+    estacoes_zee = {
+        regiao: zonas.get("ZEE")
+        for regiao, zonas in estacoes_processadas.items()
+        if "ZEE" in zonas
+    }
+    caminho_formula = PASTA_SAIDA / "comparacao_formula_teorica.png"
+    gerar_figura_comparacao_formula(estacoes_zee, caminho_formula)
+    print(f"  {caminho_formula.name}")
+
+    # -----------------------------------------------------------------
+    # Gráficos de dispersão propriedade x propriedade: c×T, S×T, σ×T,
+    # c×S, σ×S — versão função (k=0) e versão derivada (k=1)
+    # -----------------------------------------------------------------
+    print("\nGerando gráficos de dispersão propriedade x propriedade...")
+
+    for regiao, zonas in estacoes_processadas.items():
+        if not zonas:
+            continue
+        curvas = {zona: {"dados": df_z, "cor": CORES_ZONA.get(zona, "black")}
+                  for zona, df_z in zonas.items()}
+
+        caminho = PASTA_SAIDA / f"dispersao_regiao_{regiao}.png"
+        gerar_figura_dispersao(curvas, caminho, titulo=f"Diagramas Propriedade × Propriedade — Região {regiao}")
+
+        caminho_deriv = PASTA_SAIDA / f"dispersao_regiao_{regiao}_derivada.png"
+        gerar_figura_dispersao_derivada(
+            curvas, caminho_deriv,
+            titulo=f"Diagramas Propriedade × Propriedade (Derivadas) — Região {regiao}",
+        )
+        print(f"  {regiao}: {caminho.name}, {caminho_deriv.name}")
+
+    for zona in ["Rasa", "Plataforma", "ZEE"]:
+        curvas = {}
+        for regiao, zonas in estacoes_processadas.items():
+            if zona in zonas:
+                curvas[regiao] = {"dados": zonas[zona], "cor": CORES_REGIAO.get(regiao, "black")}
+        if not curvas:
+            continue
+
+        caminho = PASTA_SAIDA / f"dispersao_zona_{zona}.png"
+        gerar_figura_dispersao(curvas, caminho, titulo=f"Diagramas Propriedade × Propriedade — Zona {zona}")
+
+        caminho_deriv = PASTA_SAIDA / f"dispersao_zona_{zona}_derivada.png"
+        gerar_figura_dispersao_derivada(
+            curvas, caminho_deriv,
+            titulo=f"Diagramas Propriedade × Propriedade (Derivadas) — Zona {zona}",
+        )
+        print(f"  {zona}: {caminho.name}, {caminho_deriv.name}")
 
     # -----------------------------------------------------------------
     # Tabela-resumo
